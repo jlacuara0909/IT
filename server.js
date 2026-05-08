@@ -1,4 +1,4 @@
-import "dotenv/config";
+// SIN import de dotenv — Railway inyecta las variables directo
 import express from "express";
 import axios from "axios";
 
@@ -11,6 +11,9 @@ const AGENT_ID = process.env.ANTHROPIC_AGENT_ID || "agent_011CaqQvYwUshE1kV1L5Dq
 const ENVIRONMENT_ID = process.env.ANTHROPIC_ENVIRONMENT_ID || "env_01HpwrYj8eQfY9xBZtdDh4iM";
 const WAAPI_TOKEN = process.env.WAAPI_TOKEN;
 const WAAPI_INSTANCE_ID = process.env.WAAPI_INSTANCE_ID || "91610";
+
+console.log("API KEY EXISTS:", !!API_KEY);
+console.log("API KEY LENGTH:", API_KEY?.length);
 
 const ANTHROPIC_HEADERS = {
   "x-api-key": API_KEY,
@@ -107,7 +110,6 @@ async function sendWhatsAppMessage(chatId, message) {
   );
 }
 
-// ── RUTA DEBUG: visitá esta URL para ver las variables ──
 app.get("/debug", (req, res) => {
   res.json({
     total_env_vars: Object.keys(process.env).length,
@@ -116,8 +118,6 @@ app.get("/debug", (req, res) => {
     api_key_exists: !!API_KEY,
     api_key_length: API_KEY?.length,
     test_var: process.env.TEST_VAR,
-    node_env: process.env.NODE_ENV,
-    railway_env: process.env.RAILWAY_ENVIRONMENT,
   });
 });
 
