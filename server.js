@@ -5,6 +5,13 @@ import axios from "axios";
 const app = express();
 app.use(express.json({ limit: "25mb" }));
 
+// ── DEBUG: ver TODAS las variables de entorno ──
+console.log("TOTAL ENV VARS:", Object.keys(process.env).length);
+console.log("TODAS LAS ENV:", Object.keys(process.env).join(", "));
+console.log("TEST_VAR:", process.env.TEST_VAR);
+console.log("ENV KEYS:", Object.keys(process.env).filter(k => k.startsWith("ANTHROPIC") || k.startsWith("WAAPI")));
+console.log("API KEY EXISTS:", !!process.env.ANTHROPIC_API_KEY);
+
 // ── Variables de entorno ──
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const AGENT_ID = process.env.ANTHROPIC_AGENT_ID || "agent_011CaqQvYwUshE1kV1L5Dqfj";
@@ -12,16 +19,14 @@ const ENVIRONMENT_ID = process.env.ANTHROPIC_ENVIRONMENT_ID || "env_01HpwrYj8eQf
 const WAAPI_TOKEN = process.env.WAAPI_TOKEN;
 const WAAPI_INSTANCE_ID = process.env.WAAPI_INSTANCE_ID || "91610";
 
-// ── Debug ──
-console.log("ENV KEYS:", Object.keys(process.env).filter(k => k.startsWith("ANTHROPIC") || k.startsWith("WAAPI")));
-console.log("API KEY EXISTS:", !!API_KEY);
-
 if (!API_KEY) {
   console.error("❌ FALTA ANTHROPIC_API_KEY en variables de entorno");
-  console.error("Configurala en Railway Variables o en un archivo .env local");
-  process.exit(1);
+  // NO hacer process.exit — dejar que arranque para seguir debuggeando
 }
-console.log("✅ API key configurada:", API_KEY.slice(0, 12) + "...");
+
+if (API_KEY) {
+  console.log("✅ API key configurada:", API_KEY.slice(0, 12) + "...");
+}
 console.log("✅ Agent ID:", AGENT_ID);
 console.log("✅ Environment ID:", ENVIRONMENT_ID);
 
@@ -55,13 +60,11 @@ async function createClaudeSession() {
 
 // ── Enviar mensaje y esperar respuesta ──
 async function sendMessageToClaude(sessionId, text) {
-  // 1. Abrir stream PRIMERO
   const streamPromise = fetch(
     `https://api.anthropic.com/v1/sessions/${sessionId}/events/stream`,
     { headers: ANTHROPIC_HEADERS }
   );
 
-  // 2. Enviar mensaje
   await axios.post(
     `https://api.anthropic.com/v1/sessions/${sessionId}/events`,
     {
@@ -75,7 +78,6 @@ async function sendMessageToClaude(sessionId, text) {
     { headers: ANTHROPIC_HEADERS }
   );
 
-  // 3. Leer stream
   const stream = await streamPromise;
   const reader = stream.body.getReader();
   const decoder = new TextDecoder();
@@ -163,6 +165,11 @@ app.post("/webhook/waapi", async (req, res) => {
     if (!text) return;
 
     console.log("Mensaje:", text, "de:", chatId);
+
+    if (!API_KEY) {
+      console.error("❌ No hay API key, no puedo crear sesión");
+      return;
+    }
 
     if (!sessions[chatId]) {
       console.log("Creando nueva sesión Claude...");
