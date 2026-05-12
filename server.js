@@ -193,14 +193,25 @@ async function processQueue(chatId) {
       console.log("─────────────────────────────");
       console.log("Procesando:", text, "de:", chatId);
 
-      // Crear sesión si no existe
+      // Crear sesión si no existe (con un reintento)
       if (!sessions[chatId]) {
         console.log("Creando nueva sesión Claude...");
-        try {
-          sessions[chatId] = await createClaudeSession();
-        } catch (err) {
-          console.error("❌ Error creando sesión:", err.response?.data || err.message);
-          await sendWhatsAppMessage(chatId, "Error iniciando sesión. Intentá de nuevo.");
+        let sessionCreated = false;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            sessions[chatId] = await createClaudeSession();
+            sessionCreated = true;
+            break;
+          } catch (err) {
+            console.error(`❌ Error creando sesión (intento ${attempt}):`, err.response?.data || err.message);
+            if (attempt < 2) {
+              console.log("Reintentando en 5s...");
+              await new Promise(r => setTimeout(r, 5000));
+            }
+          }
+        }
+        if (!sessionCreated) {
+          await sendWhatsAppMessage(chatId, "No pude conectar con el asistente. Mandá *itstock* en un momento para intentar de nuevo.");
           continue;
         }
       }
@@ -209,9 +220,10 @@ async function processQueue(chatId) {
         await sendMessageToClaude(sessions[chatId], chatId, text);
       } catch (err) {
         console.error("❌ Error procesando mensaje:", err.message);
-        // Sesión rota, limpiar para recrear
+        // Sesión rota — recrear en el próximo mensaje, vaciar cola para no acumular mensajes viejos
         delete sessions[chatId];
-        await sendWhatsAppMessage(chatId, "Error procesando. Intentá de nuevo.");
+        messageQueue[chatId] = [];
+        await sendWhatsAppMessage(chatId, "Hubo un problema de conexión. Mandá *itstock* para reconectarte.");
       }
     }
   } finally {
@@ -238,9 +250,9 @@ app.post("/webhook/waapi", async (req, res) => {
       return;
     }
 
-    // Filtro trigger: ignorar mensajes sin "itstock" si no hay sesión activa
+    // Filtro trigger: ignorar mensajes sin "itstock" (palabra exacta) si no hay sesión activa
     const hasActiveSession = !!sessions[chatId];
-    const hasTrigger = text.toLowerCase().includes("itstock");
+    const hasTrigger = /\bitstock\b/i.test(text);  // palabra exacta, "finitstock" no cuenta
     if (!hasActiveSession && !hasTrigger) {
       console.log("🔇 Ignorado (sin trigger y sin sesión):", text, "de:", chatId);
       return;
