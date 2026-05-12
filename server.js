@@ -90,28 +90,50 @@ async function waitForIdle(sessionId, maxWaitMs = 30000) {
 }
 
 async function sendMessageToClaude(sessionId, chatId, text) {
-  // Esperar a que la sesión esté idle antes de enviar
   await waitForIdle(sessionId);
 
-  const streamPromise = fetch(
-    `https://api.anthropic.com/v1/sessions/${sessionId}/events/stream`,
-    { headers: ANTHROPIC_HEADERS }
-  );
+  // Abrir stream ANTES de enviar para no perder eventos
+  let streamPromise;
+  try {
+    streamPromise = fetch(
+      `https://api.anthropic.com/v1/sessions/${sessionId}/events/stream`,
+      {
+        headers: {
+          "x-api-key": API_KEY,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "managed-agents-2026-04-01",
+          "accept": "text/event-stream",
+        }
+      }
+    );
+  } catch (err) {
+    console.error("❌ fetch no disponible:", err.message);
+    throw err;
+  }
 
-  await axios.post(
-    `https://api.anthropic.com/v1/sessions/${sessionId}/events`,
-    {
-      events: [
-        { type: "user.message", content: [{ type: "text", text }] },
-      ],
-    },
-    { headers: ANTHROPIC_HEADERS }
-  );
-  console.log("📤 Mensaje enviado a Claude:", text.slice(0, 50));
+  try {
+    await axios.post(
+      `https://api.anthropic.com/v1/sessions/${sessionId}/events`,
+      { events: [{ type: "user.message", content: [{ type: "text", text }] }] },
+      { headers: ANTHROPIC_HEADERS }
+    );
+    console.log("📤 Mensaje enviado a Claude:", text.slice(0, 50));
+  } catch (err) {
+    console.error("❌ Error enviando mensaje:", err.response?.status, err.response?.data || err.message);
+    throw err;
+  }
 
-  const stream = await streamPromise;
+  let stream;
+  try {
+    stream = await streamPromise;
+  } catch (err) {
+    console.error("❌ Error conectando stream:", err.message);
+    throw err;
+  }
+
   if (!stream.ok) {
-    console.error("❌ Stream error:", stream.status);
+    const errText = await stream.text().catch(() => "");
+    console.error("❌ Stream no-ok:", stream.status, errText.slice(0, 200));
     await sendWhatsAppMessage(chatId, "Error conectando con el agente.");
     return;
   }
@@ -122,50 +144,54 @@ async function sendMessageToClaude(sessionId, chatId, text) {
   const TIMEOUT_MS = 10 * 60 * 1000;
   const startTime = Date.now();
 
-  while (true) {
-    if (Date.now() - startTime > TIMEOUT_MS) {
-      console.error("⏰ Timeout");
-      reader.cancel();
-      break;
-    }
+  try {
+    while (true) {
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        console.error("⏰ Timeout");
+        reader.cancel();
+        break;
+      }
 
-    const { done, value } = await reader.read();
-    if (done) break;
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const json = JSON.parse(line.slice(6));
-        console.log("📨 Evento:", json.type);
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const json = JSON.parse(line.slice(6));
+          console.log("📨 Evento:", json.type);
 
-        // Enviar cada mensaje del agente a WhatsApp inmediatamente
-        if (json.type === "agent.message") {
-          for (const block of json.content || []) {
-            if (block.type === "text" && block.text?.trim()) {
-              console.log("💬 Enviando mensaje a WhatsApp:", block.text.slice(0, 60));
-              await sendWhatsAppMessage(chatId, block.text);
+          if (json.type === "agent.message") {
+            for (const block of json.content || []) {
+              if (block.type === "text" && block.text?.trim()) {
+                console.log("💬 Enviando a WhatsApp:", block.text.slice(0, 60));
+                await sendWhatsAppMessage(chatId, block.text);
+              }
             }
           }
-        }
 
-        if (json.type === "session.status_idle" && json.stop_reason?.type !== "requires_action") {
-          console.log("✅ Turno completo");
-          reader.cancel();
-          return;
-        }
+          if (json.type === "session.status_idle" && json.stop_reason?.type !== "requires_action") {
+            console.log("✅ Turno completo");
+            reader.cancel();
+            return;
+          }
 
-        if (json.type === "session.error") {
-          console.error("❌ Error sesión:", JSON.stringify(json));
-          reader.cancel();
-          await sendWhatsAppMessage(chatId, "Hubo un error. Intentá de nuevo.");
-          return;
-        }
-      } catch {}
+          if (json.type === "session.error") {
+            console.error("❌ Error sesión:", JSON.stringify(json));
+            reader.cancel();
+            await sendWhatsAppMessage(chatId, "Hubo un error en el agente. Intentá de nuevo.");
+            return;
+          }
+        } catch {}
+      }
     }
+  } catch (err) {
+    console.error("❌ Error leyendo stream:", err.message);
+    throw err;
   }
 }
 
