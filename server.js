@@ -8,6 +8,7 @@ const API_KEY = process.env.ANTHROPIC_API_KEY;
 const AGENT_ID = process.env.ANTHROPIC_AGENT_ID || "agent_011CaqQvYwUshE1kV1L5Dqfj";
 const ENVIRONMENT_ID = process.env.ANTHROPIC_ENVIRONMENT_ID || "env_01HpwrYj8eQfY9xBZtdDh4iM";
 const VAULT_ID = process.env.ANTHROPIC_VAULT_ID || "vlt_011CaqPXcEfFfTL8DEwYpWsy";
+const MEMORY_STORE_ID = process.env.ANTHROPIC_MEMORY_STORE_ID || "memstore_01DhrDVPNsLgjArvAVokdCm7";
 const WAAPI_TOKEN = process.env.WAAPI_TOKEN;
 const WAAPI_INSTANCE_ID = process.env.WAAPI_INSTANCE_ID || "91610";
 
@@ -52,6 +53,14 @@ async function createClaudeSession() {
       agent: { type: "agent", id: AGENT_ID },
       environment_id: ENVIRONMENT_ID,
       vault_ids: [VAULT_ID],
+      resources: [
+        {
+          type: "memory_store",
+          memory_store_id: MEMORY_STORE_ID,
+          access: "read_write",
+          instructions: "Sesiones activas por WhatsApp, usuarios, bloqueos y cache del sheet. Leer al inicio de cada sesión, escribir al cambiar estado.",
+        }
+      ],
     },
     { headers: ANTHROPIC_HEADERS }
   );
@@ -225,6 +234,14 @@ app.post("/webhook/waapi", async (req, res) => {
 
     if (!API_KEY) {
       console.error("❌ No hay API key");
+      return;
+    }
+
+    // Filtro trigger: ignorar mensajes sin "itstock" si no hay sesión activa
+    const hasActiveSession = !!sessions[chatId];
+    const hasTrigger = text.toLowerCase().includes("itstock");
+    if (!hasActiveSession && !hasTrigger) {
+      console.log("🔇 Ignorado (sin trigger y sin sesión):", text, "de:", chatId);
       return;
     }
 
