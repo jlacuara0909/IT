@@ -242,14 +242,36 @@ async function processQueue(chatId) {
         }
       }
 
-      try {
-        await sendMessageToClaude(sessions[chatId], chatId, text);
-      } catch (err) {
-        console.error("❌ Error procesando mensaje:", err.message);
-        // Sesión rota — recrear en el próximo mensaje, vaciar cola para no acumular mensajes viejos
-        delete sessions[chatId];
-        messageQueue[chatId] = [];
-        await sendWhatsAppMessage(chatId, "Hubo un problema de conexión. Mandá *itstock* para reconectarte.");
+      let msgSent = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await sendMessageToClaude(sessions[chatId], chatId, text);
+          msgSent = true;
+          break;
+        } catch (err) {
+          const status = err.response?.status;
+          console.error(`❌ Error procesando mensaje (intento ${attempt}):`, status, err.message);
+
+          // 500 = error transitorio del API → reintentar con delay
+          if (status === 500 && attempt < 3) {
+            console.log(`⏳ Reintentando en ${attempt * 3}s...`);
+            await new Promise(r => setTimeout(r, attempt * 3000));
+            continue;
+          }
+
+          // 404/410/terminated = sesión inválida → recrear
+          const sessionBroken = status === 404 || status === 410 ||
+            err.message?.includes("terminated") || err.message?.includes("not found");
+          if (sessionBroken) {
+            console.log("🔄 Sesión inválida, se recreará en el próximo mensaje");
+            delete sessions[chatId];
+          }
+
+          // Limpiar cola para no procesar mensajes acumulados de la sesión rota
+          messageQueue[chatId] = [];
+          await sendWhatsAppMessage(chatId, "Hubo un problema de conexión. Mandá *itstock* para reconectarte.");
+          break;
+        }
       }
     }
   } finally {
