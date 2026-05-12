@@ -89,7 +89,7 @@ async function waitForIdle(sessionId, maxWaitMs = 30000) {
   return false;
 }
 
-async function sendMessageToClaude(sessionId, text) {
+async function sendMessageToClaude(sessionId, chatId, text) {
   // Esperar a que la sesión esté idle antes de enviar
   await waitForIdle(sessionId);
 
@@ -112,14 +112,14 @@ async function sendMessageToClaude(sessionId, text) {
   const stream = await streamPromise;
   if (!stream.ok) {
     console.error("❌ Stream error:", stream.status);
-    return "Error conectando con el agente.";
+    await sendWhatsAppMessage(chatId, "Error conectando con el agente.");
+    return;
   }
 
   const reader = stream.body.getReader();
   const decoder = new TextDecoder();
-  let fullResponse = "";
   let buffer = "";
-  const TIMEOUT_MS = 5 * 60 * 1000;
+  const TIMEOUT_MS = 10 * 60 * 1000;
   const startTime = Date.now();
 
   while (true) {
@@ -142,28 +142,31 @@ async function sendMessageToClaude(sessionId, text) {
         const json = JSON.parse(line.slice(6));
         console.log("📨 Evento:", json.type);
 
+        // Enviar cada mensaje del agente a WhatsApp inmediatamente
         if (json.type === "agent.message") {
           for (const block of json.content || []) {
-            if (block.type === "text") fullResponse += block.text;
+            if (block.type === "text" && block.text?.trim()) {
+              console.log("💬 Enviando mensaje a WhatsApp:", block.text.slice(0, 60));
+              await sendWhatsAppMessage(chatId, block.text);
+            }
           }
         }
 
         if (json.type === "session.status_idle" && json.stop_reason?.type !== "requires_action") {
-          console.log("✅ Respuesta completa");
+          console.log("✅ Turno completo");
           reader.cancel();
-          return fullResponse || "Sin respuesta del agente.";
+          return;
         }
 
         if (json.type === "session.error") {
           console.error("❌ Error sesión:", JSON.stringify(json));
           reader.cancel();
-          return "Hubo un error. Intentá de nuevo.";
+          await sendWhatsAppMessage(chatId, "Hubo un error. Intentá de nuevo.");
+          return;
         }
       } catch {}
     }
   }
-
-  return fullResponse || "Sin respuesta.";
 }
 
 async function sendWhatsAppMessage(chatId, message) {
@@ -203,9 +206,7 @@ async function processQueue(chatId) {
       }
 
       try {
-        const response = await sendMessageToClaude(sessions[chatId], text);
-        console.log("Respuesta:", response.slice(0, 100) + "...");
-        await sendWhatsAppMessage(chatId, response);
+        await sendMessageToClaude(sessions[chatId], chatId, text);
       } catch (err) {
         console.error("❌ Error procesando mensaje:", err.message);
         // Sesión rota, limpiar para recrear
